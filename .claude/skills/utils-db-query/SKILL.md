@@ -1,3 +1,8 @@
+---
+name: utils-db-query
+description: Query the Wisepipe PostgreSQL production database (readonly)
+---
+
 # Skill: Wisepipe Database Query
 
 Accès en lecture seule à la base de données PostgreSQL de production Wisepipe.
@@ -6,7 +11,7 @@ Accès en lecture seule à la base de données PostgreSQL de production Wisepipe
 
 - **Credentials:** Stockés dans `.env` (variables `CLAUDE_DB_*`)
 - **Script:** `~/Code/claude-config/scripts/db-query.sh` - wrapper qui charge les credentials automatiquement
-- **Schema:** `.claude/db-schema.md` - documentation complète des tables
+- **Schema:** `~/Code/claude-config/.claude/db-schema.md` - documentation complète des tables
 
 ## Utilisation
 

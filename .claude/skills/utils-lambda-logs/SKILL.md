@@ -1,3 +1,8 @@
+---
+name: utils-lambda-logs
+description: Monitor Lambda errors and logs via AWS CloudWatch
+---
+
 # Skill: Lambda Error Monitoring
 
 Monitoring des erreurs Lambda via AWS CloudWatch.
