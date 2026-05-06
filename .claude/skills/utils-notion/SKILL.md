@@ -17,11 +17,12 @@ Read any Notion page as Markdown, or manage the PR ↔ Notion ticket link for th
 | `/utils-notion link --title "<title>"` | `link --title "<title>"` | Same as above but find the page by title search across configured databases |
 | `/utils-notion` or `/utils-notion read` | `read` | Fetch the page linked to the current branch and inject its content as Markdown context |
 | `/utils-notion update` | `update --field <name> --value <value>` | Update an arbitrary property on the linked page |
+| `/utils-notion append` | `append --file <path>` | Append a Markdown file (or stdin with `--file -`) as blocks to the linked page |
 
 ## How to run
 
 ```bash
-uv run python .claude/skills/utils-notion/notion_ctx.py <command>
+uv run .claude/skills/utils-notion/notion_ctx.py <command>
 ```
 
 ## Workflow per sub-command
@@ -30,7 +31,7 @@ uv run python .claude/skills/utils-notion/notion_ctx.py <command>
 
 Run:
 ```bash
-uv run python .claude/skills/utils-notion/notion_ctx.py fetch <url-or-id>
+uv run .claude/skills/utils-notion/notion_ctx.py fetch <url-or-id>
 ```
 
 Print the script output verbatim. Accepts a full Notion URL or a bare page ID (with or without dashes). Only requires `NOTION_API_KEY` -- does not need the DB IDs.
@@ -39,9 +40,9 @@ Print the script output verbatim. Accepts a full Notion URL or a bare page ID (w
 
 Run:
 ```bash
-uv run python .claude/skills/utils-notion/notion_ctx.py link <url>
+uv run .claude/skills/utils-notion/notion_ctx.py link <url>
 # or
-uv run python .claude/skills/utils-notion/notion_ctx.py link --title "<title>"
+uv run .claude/skills/utils-notion/notion_ctx.py link --title "<title>"
 ```
 
 Report success or error to the user.
@@ -50,7 +51,7 @@ Report success or error to the user.
 
 Run:
 ```bash
-uv run python .claude/skills/utils-notion/notion_ctx.py read
+uv run .claude/skills/utils-notion/notion_ctx.py read
 ```
 
 Print the script output verbatim. The output is compact Markdown (~200-500 tokens) with the page title, status, assignee, branch, and body.
@@ -62,12 +63,25 @@ If the script exits with "No Notion page linked", tell the user to run `/utils-n
 Ask the user which field and value to update (if not already specified in the invocation).
 Then run:
 ```bash
-uv run python .claude/skills/utils-notion/notion_ctx.py update --field "<field>" --value "<value>"
+uv run .claude/skills/utils-notion/notion_ctx.py update --field "<field>" --value "<value>"
 ```
 
-Supported property types: `title`, `rich_text`, `select`, `status`, `multi_select`, `checkbox`, `number`, `url`, `email`, `phone_number`.
+Supported property types: `title`, `rich_text`, `select`, `status`, `multi_select`, `checkbox`, `number`, `url`, `email`, `phone_number`, `people`.
+
+For `people`-type properties, `--value` accepts a comma-separated list of user IDs, emails (exact), or name substrings — the script resolves them via the Notion users API.
 
 Report success or error. Status changes can also be done manually in Notion.
+
+### `/utils-notion append`
+
+Run:
+```bash
+uv run .claude/skills/utils-notion/notion_ctx.py append --file <path>
+# or pipe from stdin
+echo "# Title\n\n- bullet" | uv run .claude/skills/utils-notion/notion_ctx.py append --file -
+```
+
+Appends parsed Markdown as Notion blocks to the page linked to the current branch. Supports block types H1/H2/H3, bullets (`-`/`*`), numbered lists, quotes (`>`), code fences, and paragraphs, plus inline `**bold**`, `*italic*`, `_italic_`, and `` `code` `` rendered as Notion rich-text annotations. Chunks automatically at the 100-block API limit.
 
 ## Required env vars
 

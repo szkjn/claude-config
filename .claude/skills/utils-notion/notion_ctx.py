@@ -1,4 +1,11 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "requests",
+#     "python-dotenv",
+# ]
+# ///
 """Notion context script — fetch Notion pages by URL, or by git-branch link for PR workflows."""
 
 import argparse
@@ -103,24 +110,166 @@ def query_page_by_branch(api_key, db_ids, branch):
     return []
 
 
+def get_title_property_name(api_key, db_id):
+    """Return the name of the title property for a given database (varies per DB)."""
+    resp = requests.get(
+        f"https://api.notion.com/v1/databases/{db_id}", headers=notion_headers(api_key)
+    )
+    if resp.status_code != 200:
+        return None
+    for name, prop in resp.json().get("properties", {}).items():
+        if prop.get("type") == "title":
+            return name
+    return None
+
+
 def query_page_by_title(api_key, db_ids, title):
     """Search all configured databases for pages whose title contains the given string."""
     results = []
     for db_id in db_ids:
+        title_prop = get_title_property_name(api_key, db_id)
+        if not title_prop:
+            continue
         url = f"https://api.notion.com/v1/databases/{db_id}/query"
-        payload = {
-            "filter": {
-                "or": [
-                    {"property": "Name", "title": {"contains": title}},
-                    {"property": "Titre", "title": {"contains": title}},
-                    {"property": "Title", "title": {"contains": title}},
-                ]
-            }
-        }
+        payload = {"filter": {"property": title_prop, "title": {"contains": title}}}
         resp = requests.post(url, headers=notion_headers(api_key), json=payload)
         if resp.status_code == 200:
             results.extend(resp.json().get("results", []))
     return results
+
+
+def list_users(api_key):
+    """Return the full list of Notion users visible to this integration."""
+    users = []
+    cursor = None
+    while True:
+        params = {"page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        resp = requests.get(
+            "https://api.notion.com/v1/users", headers=notion_headers(api_key), params=params
+        )
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        users.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return users
+
+
+def resolve_people(api_key, value):
+    """Resolve a comma-separated list of user references (id, email, or name substring) to user IDs."""
+    tokens = [t.strip() for t in value.split(",") if t.strip()]
+    users = list_users(api_key)
+    ids = []
+    for token in tokens:
+        if re.fullmatch(r"[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}", token, re.I):
+            ids.append(token)
+            continue
+        match = None
+        for u in users:
+            email = (u.get("person") or {}).get("email", "") or ""
+            name = u.get("name") or ""
+            if email.lower() == token.lower() or token.lower() in name.lower():
+                match = u
+                break
+        if not match:
+            print(f"Error: could not resolve person '{token}'", file=sys.stderr)
+            sys.exit(1)
+        ids.append(match["id"])
+    return ids
+
+
+_INLINE_RE = re.compile(
+    r"(\*\*[^*\n]+\*\*"   # bold (greedy-safe via [^*])
+    r"|`[^`\n]+`"          # inline code
+    r"|\*[^*\n]+\*"        # italic with *
+    r"|_[^_\n]+_)"         # italic with _
+)
+
+
+def inline_to_rich_text(text):
+    """Split a string into Notion rich_text fragments, honoring **bold**, *italic*, _italic_, `code`."""
+    if text == "":
+        return [{"type": "text", "text": {"content": ""}}]
+    fragments = []
+    for part in _INLINE_RE.split(text):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**"):
+            fragments.append({
+                "type": "text",
+                "text": {"content": part[2:-2]},
+                "annotations": {"bold": True},
+            })
+        elif part.startswith("`") and part.endswith("`"):
+            fragments.append({
+                "type": "text",
+                "text": {"content": part[1:-1]},
+                "annotations": {"code": True},
+            })
+        elif (part.startswith("*") and part.endswith("*")) or (
+            part.startswith("_") and part.endswith("_")
+        ):
+            fragments.append({
+                "type": "text",
+                "text": {"content": part[1:-1]},
+                "annotations": {"italic": True},
+            })
+        else:
+            fragments.append({"type": "text", "text": {"content": part}})
+    return fragments or [{"type": "text", "text": {"content": ""}}]
+
+
+def markdown_to_blocks(md):
+    """Minimal markdown-to-Notion-blocks converter (headings, bullets, paragraphs, code fences, blank lines)."""
+    blocks = []
+    lines = md.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+
+        if stripped.startswith("```"):
+            lang = stripped[3:].strip() or "plain text"
+            i += 1
+            code_lines = []
+            while i < len(lines) and not lines[i].lstrip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            i += 1
+            blocks.append({
+                "object": "block", "type": "code",
+                "code": {
+                    "rich_text": [{"type": "text", "text": {"content": "\n".join(code_lines)}}],
+                    "language": lang,
+                },
+            })
+            continue
+
+        if not stripped:
+            i += 1
+            continue
+
+        if stripped.startswith("### "):
+            blocks.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": inline_to_rich_text(stripped[4:])}})
+        elif stripped.startswith("## "):
+            blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": inline_to_rich_text(stripped[3:])}})
+        elif stripped.startswith("# "):
+            blocks.append({"object": "block", "type": "heading_1", "heading_1": {"rich_text": inline_to_rich_text(stripped[2:])}})
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            blocks.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": inline_to_rich_text(stripped[2:])}})
+        elif re.match(r"\d+\.\s", stripped):
+            content = re.sub(r"^\d+\.\s", "", stripped)
+            blocks.append({"object": "block", "type": "numbered_list_item", "numbered_list_item": {"rich_text": inline_to_rich_text(content)}})
+        elif stripped.startswith("> "):
+            blocks.append({"object": "block", "type": "quote", "quote": {"rich_text": inline_to_rich_text(stripped[2:])}})
+        else:
+            blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": inline_to_rich_text(stripped)}})
+        i += 1
+    return blocks
 
 
 def get_page(api_key, page_id):
@@ -356,6 +505,9 @@ def cmd_update(args):
         payload_prop = {"email": value}
     elif ptype == "phone_number":
         payload_prop = {"phone_number": value}
+    elif ptype == "people":
+        people_ids = resolve_people(api_key, value)
+        payload_prop = {"people": [{"id": pid} for pid in people_ids]}
     else:
         print(f"Error: unsupported property type '{ptype}' for '{field}'", file=sys.stderr)
         sys.exit(1)
@@ -368,6 +520,42 @@ def cmd_update(args):
         print(f"Error updating page: {resp.status_code} {resp.text}", file=sys.stderr)
         sys.exit(1)
     print(f"Updated '{field}' to '{value}' on Notion page {page_id}")
+
+
+def cmd_append(args):
+    """Append markdown content as blocks to the Notion page linked to the current branch."""
+    api_key = get_api_key()
+    db_ids = get_db_ids()
+    branch = get_branch_ref()
+    results = query_page_by_branch(api_key, db_ids, branch)
+    if not results:
+        print(f"No Notion page linked to branch '{branch}'.")
+        sys.exit(1)
+    page_id = results[0]["id"]
+
+    if args.file == "-":
+        md = sys.stdin.read()
+    else:
+        with open(args.file) as f:
+            md = f.read()
+
+    blocks = markdown_to_blocks(md)
+    if not blocks:
+        print("Error: no content to append", file=sys.stderr)
+        sys.exit(1)
+
+    # Notion API limits appends to 100 blocks per request
+    for offset in range(0, len(blocks), 100):
+        chunk = blocks[offset : offset + 100]
+        resp = requests.patch(
+            f"https://api.notion.com/v1/blocks/{page_id}/children",
+            headers=notion_headers(api_key),
+            json={"children": chunk},
+        )
+        if resp.status_code != 200:
+            print(f"Error appending blocks: {resp.status_code} {resp.text}", file=sys.stderr)
+            sys.exit(1)
+    print(f"Appended {len(blocks)} block(s) to Notion page {page_id}")
 
 
 def main():
@@ -392,6 +580,10 @@ def main():
     p_update.add_argument("--field", required=True)
     p_update.add_argument("--value", required=True)
     p_update.set_defaults(func=cmd_update)
+
+    p_append = subparsers.add_parser("append", help="Append markdown content as blocks to the linked page")
+    p_append.add_argument("--file", required=True, help="Path to a Markdown file, or '-' for stdin")
+    p_append.set_defaults(func=cmd_append)
 
     args = parser.parse_args()
     args.func(args)
