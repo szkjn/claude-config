@@ -13,7 +13,7 @@ Read any Notion page as Markdown, or manage the PR ↔ Notion ticket link for th
 | User invocation | Script command | Effect |
 |---|---|---|
 | `/utils-notion fetch <url-or-id>` | `fetch <url-or-id>` | Fetch any Notion page by URL or ID and print its content as Markdown. No DB config needed. |
-| `/utils-notion link <url>` | `link <url>` | Write current branch name to the `Branch` property of the given Notion page (one-time per feature) |
+| `/utils-notion link <url>` | `link <url>` | Append current branch (`<repo>:<branch>`) to the `Branch` property of the given Notion page. Supports linking several branches (e.g. one per repo) to a single ticket — existing entries are preserved and duplicates are skipped. |
 | `/utils-notion link --title "<title>"` | `link --title "<title>"` | Same as above but find the page by title search across configured databases |
 | `/utils-notion` or `/utils-notion read` | `read` | Fetch the page linked to the current branch and inject its content as Markdown context |
 | `/utils-notion update` | `update --field <name> --value <value>` | Update an arbitrary property on the linked page |

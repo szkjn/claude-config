@@ -95,11 +95,11 @@ def extract_page_id(page_url_or_id):
 
 
 def query_page_by_branch(api_key, db_ids, branch):
-    """Search all configured databases for a page whose Branch property equals branch."""
+    """Search all configured databases for a page whose Branch property contains branch (supports multi-branch tickets)."""
     for db_id in db_ids:
         url = f"https://api.notion.com/v1/databases/{db_id}/query"
         payload = {
-            "filter": {"property": "Branch", "rich_text": {"equals": branch}}
+            "filter": {"property": "Branch", "rich_text": {"contains": branch}}
         }
         resp = requests.post(url, headers=notion_headers(api_key), json=payload)
         if resp.status_code != 200:
@@ -449,17 +449,31 @@ def cmd_link(args):
     else:
         page_id = extract_page_id(args.page_url)
 
+    page = get_page(api_key, page_id)
+    existing = ""
+    if "Branch" in page.get("properties", {}):
+        existing = extract_rich_text(page["properties"]["Branch"].get("rich_text", []))
+    existing_refs = [b.strip() for b in existing.split(",") if b.strip()]
+    if branch_ref in existing_refs:
+        print(f"Branch '{branch_ref}' already linked to Notion page {page_id}")
+        return
+    new_refs = existing_refs + [branch_ref]
+    new_value = ", ".join(new_refs)
+
     url = f"https://api.notion.com/v1/pages/{page_id}"
     payload = {
         "properties": {
-            "Branch": {"rich_text": [{"type": "text", "text": {"content": branch_ref}}]}
+            "Branch": {"rich_text": [{"type": "text", "text": {"content": new_value}}]}
         }
     }
     resp = requests.patch(url, headers=notion_headers(api_key), json=payload)
     if resp.status_code != 200:
         print(f"Error updating page: {resp.status_code} {resp.text}", file=sys.stderr)
         sys.exit(1)
-    print(f"Linked branch '{branch_ref}' to Notion page {page_id}")
+    if len(new_refs) > 1:
+        print(f"Linked branch '{branch_ref}' to Notion page {page_id} (now {len(new_refs)} branches: {new_value})")
+    else:
+        print(f"Linked branch '{branch_ref}' to Notion page {page_id}")
 
 
 def cmd_update(args):
